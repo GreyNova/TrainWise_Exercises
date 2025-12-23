@@ -133,6 +133,8 @@ def get_landmark_features(kp_results, dict_features, feature, frame_width, frame
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+import os
+import sys
 
 class LandmarkListShim:
     def __init__(self, landmarks):
@@ -149,7 +151,14 @@ class PoseShim:
     def __init__(self, static_image_mode=False, model_complexity=1, smooth_landmarks=True, 
                  min_detection_confidence=0.5, min_tracking_confidence=0.5):
         
-        base_options = python.BaseOptions(model_asset_path='pose_landmarker_full.task')
+        # Determine absolute path to model file
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(current_dir, 'pose_landmarker_full.task')
+        
+        if not os.path.exists(model_path):
+             print(f"Error: Model file not found at {model_path}", file=sys.stderr)
+        
+        base_options = python.BaseOptions(model_asset_path=model_path)
         
         running_mode = vision.RunningMode.VIDEO
         if static_image_mode:
@@ -162,23 +171,35 @@ class PoseShim:
             min_tracking_confidence=min_tracking_confidence,
             num_poses=1
         )
-        self.landmarker = vision.PoseLandmarker.create_from_options(options)
+        try:
+            self.landmarker = vision.PoseLandmarker.create_from_options(options)
+            self.running_mode = running_mode
+        except Exception as e:
+            print(f"Error creating PoseLandmarker: {e}", file=sys.stderr)
+            raise e
+
         self.timestamp_ms = 0
 
     def process(self, image):
-        # Convert cv2 image (numpy) to mp.Image
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image)
-        
-        # In VIDEO mode, must provide timestamp
-        self.timestamp_ms += 33 # approx 30fps increment
-        
-        # Use detect_for_video
-        if self.landmarker._running_mode == vision.RunningMode.VIDEO:
-             result = self.landmarker.detect_for_video(mp_image, self.timestamp_ms)
-        else:
-             result = self.landmarker.detect(mp_image)
-             
-        return ResultShim(result)
+        try:
+            # Convert cv2 image (numpy) to mp.Image
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image)
+            
+            # In VIDEO mode, must provide timestamp
+            self.timestamp_ms += 33 # approx 30fps increment
+            
+            # Use detect_for_video
+            if self.running_mode == vision.RunningMode.VIDEO:
+                 result = self.landmarker.detect_for_video(mp_image, self.timestamp_ms)
+            else:
+                 result = self.landmarker.detect(mp_image)
+                 
+            return ResultShim(result)
+        except Exception as e:
+            print(f"Error in PoseShim.process: {e}", file=sys.stderr)
+            class EmptyResult:
+                pose_landmarks = None
+            return EmptyResult()
 
 def get_mediapipe_pose(
                         static_image_mode = False, 
