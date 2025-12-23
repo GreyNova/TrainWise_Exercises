@@ -128,19 +128,70 @@ def get_landmark_features(kp_results, dict_features, feature, frame_width, frame
        raise ValueError("feature needs to be either 'nose', 'left' or 'right")
 
 
+
+# Import MediaPipe Tasks API
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+
+class LandmarkListShim:
+    def __init__(self, landmarks):
+        self.landmark = landmarks
+
+class ResultShim:
+    def __init__(self, detection_result):
+        if detection_result.pose_landmarks:
+            self.pose_landmarks = LandmarkListShim(detection_result.pose_landmarks[0])
+        else:
+            self.pose_landmarks = None
+
+class PoseShim:
+    def __init__(self, static_image_mode=False, model_complexity=1, smooth_landmarks=True, 
+                 min_detection_confidence=0.5, min_tracking_confidence=0.5):
+        
+        base_options = python.BaseOptions(model_asset_path='pose_landmarker_full.task')
+        
+        running_mode = vision.RunningMode.VIDEO
+        if static_image_mode:
+            running_mode = vision.RunningMode.IMAGE
+            
+        options = vision.PoseLandmarkerOptions(
+            base_options=base_options,
+            running_mode=running_mode,
+            min_pose_detection_confidence=min_detection_confidence,
+            min_tracking_confidence=min_tracking_confidence,
+            num_poses=1
+        )
+        self.landmarker = vision.PoseLandmarker.create_from_options(options)
+        self.timestamp_ms = 0
+
+    def process(self, image):
+        # Convert cv2 image (numpy) to mp.Image
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image)
+        
+        # In VIDEO mode, must provide timestamp
+        self.timestamp_ms += 33 # approx 30fps increment
+        
+        # Use detect_for_video
+        if self.landmarker._running_mode == vision.RunningMode.VIDEO:
+             result = self.landmarker.detect_for_video(mp_image, self.timestamp_ms)
+        else:
+             result = self.landmarker.detect(mp_image)
+             
+        return ResultShim(result)
+
 def get_mediapipe_pose(
                         static_image_mode = False, 
                         model_complexity = 1,
                         smooth_landmarks = True,
                         min_detection_confidence = 0.5,
                         min_tracking_confidence = 0.5
-
                       ):
-    pose = mp.solutions.pose.Pose(
-                                    static_image_mode = static_image_mode,
-                                    model_complexity = model_complexity,
-                                    smooth_landmarks = smooth_landmarks,
-                                    min_detection_confidence = min_detection_confidence,
-                                    min_tracking_confidence = min_tracking_confidence
-                                 )
+    pose = PoseShim(
+                    static_image_mode = static_image_mode,
+                    model_complexity = model_complexity,
+                    smooth_landmarks = smooth_landmarks,
+                    min_detection_confidence = min_detection_confidence,
+                    min_tracking_confidence = min_tracking_confidence
+                   )
     return pose
